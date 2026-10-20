@@ -1,0 +1,841 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>Senda</title>
+<meta name="theme-color" content="#1e3a2e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap">
+<style>
+/* Mapa a pantalla completa; controles flotantes a la derecha; panel inferior con cifras de ruta (estilo señal de sendero GR) */
+:root{
+  --pine:#1e3a2e;      /* verde bosque: superficies de marca */
+  --blaze:#c8102e;     /* rojo baliza GR: acción principal */
+  --chalk:#fafaf7;     /* blanco baliza */
+  --bg:#f3f5f1;        /* neutro con sesgo verde */
+  --panel:#ffffff;
+  --ink:#16231c;
+  --muted:#5e6d64;
+  --line:#dde3dc;
+  --route:#7a3fd1;     /* ruta importada a seguir */
+  --track:#c8102e;     /* traza que grabas */
+  --ok:#2f8f4e; --warn:#c98a00; --bad:#c8102e;
+  --shadow:0 6px 24px rgba(16,35,25,.18);
+  --f-num:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --panel-h:180px;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0f1712;--panel:#17221b;--ink:#e8efe9;--muted:#9aaba0;--line:#2a3a30;--route:#b48cff;--track:#ff4d5e;
+  --shadow:0 6px 24px rgba(0,0,0,.5);color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0f1712;--panel:#17221b;--ink:#e8efe9;--muted:#9aaba0;--line:#2a3a30;--route:#b48cff;--track:#ff4d5e;--shadow:0 6px 24px rgba(0,0,0,.5);color-scheme:dark}
+
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;overflow:hidden;overscroll-behavior:none}
+[hidden]{display:none!important}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--blaze);outline-offset:2px}
+#map{position:fixed;inset:0;background:#dfe5dc}
+.leaflet-bottom{bottom:var(--panel-h)!important;transition:bottom .2s}
+.leaflet-control-attribution{font-size:10px;background:rgba(255,255,255,.75)!important}
+.leaflet-control-scale{margin-left:10px!important}
+
+/* barra superior */
+.top{position:fixed;top:0;left:0;right:0;z-index:1000;pointer-events:none;
+  padding:calc(env(safe-area-inset-top,0px) + 10px) max(12px,env(safe-area-inset-right,0px)) 0 max(12px,env(safe-area-inset-left,0px));
+  display:flex;flex-direction:column;gap:8px}
+.top > *{pointer-events:auto}
+.chip{display:inline-flex;align-items:center;gap:10px;align-self:flex-start;background:var(--pine);color:var(--chalk);
+  border-radius:10px;padding:7px 12px 7px 10px;box-shadow:var(--shadow);font-weight:600}
+.blaze{display:grid;gap:2px;width:20px}
+.blaze i{display:block;height:5px;border-radius:1px;background:var(--chalk)}
+.blaze i+i{background:var(--blaze)}
+.chip .name{font-family:var(--f-num);font-size:19px;letter-spacing:.06em;text-transform:uppercase}
+.gps{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:500;opacity:.92;border-left:1px solid rgba(255,255,255,.2);padding-left:10px;font-variant-numeric:tabular-nums}
+.gps b{width:8px;height:8px;border-radius:50%;background:#8a9a90}
+.gps.good b{background:#5fd38a}.gps.ok b{background:#f0c040}.gps.bad b{background:#ff6b6b}
+
+.routebar{background:var(--panel);border-radius:12px;box-shadow:var(--shadow);padding:10px 12px;display:flex;gap:10px;align-items:flex-start;
+  border-left:5px solid var(--route);max-width:min(520px,calc(100% - 58px))}
+.routebar .rb-main{flex:1;min-width:0}
+.routebar .rb-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.routebar .rb-sub{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;margin-top:2px}
+.routebar.off{border-left-color:var(--bad)}
+.routebar.off .rb-sub{color:var(--bad);font-weight:600}
+.x{border:0;background:transparent;width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--muted);flex:none}
+
+/* controles flotantes */
+.fab-col{position:fixed;right:max(12px,env(safe-area-inset-right,0px));top:calc(env(safe-area-inset-top,0px) + 64px);z-index:1000;display:flex;flex-direction:column;gap:10px}
+.fab{width:46px;height:46px;border-radius:12px;border:0;background:var(--panel);color:var(--ink);box-shadow:var(--shadow);display:grid;place-items:center}
+.fab svg{width:22px;height:22px}
+.fab.on{background:var(--pine);color:var(--chalk)}
+.fab.on2{color:var(--blaze)}
+
+/* panel inferior */
+.panel{position:fixed;left:0;right:0;bottom:0;z-index:1001;background:var(--panel);border-radius:18px 18px 0 0;box-shadow:0 -6px 24px rgba(16,35,25,.16);
+  padding:4px max(16px,env(safe-area-inset-right,0px)) calc(env(safe-area-inset-bottom,0px) + 12px) max(16px,env(safe-area-inset-left,0px))}
+.handle{display:block;margin:0 auto;width:64px;height:22px;border:0;background:transparent;position:relative}
+.handle::after{content:"";position:absolute;left:18px;right:18px;top:9px;height:4px;border-radius:2px;background:var(--line)}
+.stats{display:grid;grid-template-columns:1fr 1.3fr 1fr 1fr;gap:4px 8px}
+.stat{min-width:0}
+.stat .l{font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600;white-space:nowrap}
+.stat .v{font-family:var(--f-num);font-weight:600;font-size:clamp(21px,6.6vw,28px);line-height:1.05;font-variant-numeric:tabular-nums;white-space:nowrap}
+.stat .v small{font-size:14px;font-weight:500;color:var(--muted);margin-left:2px}
+.more{margin-top:10px;border-top:1px solid var(--line);padding-top:10px;display:grid;gap:10px}
+.more .stats .v{font-size:21px}
+.profile-wrap{position:relative}
+.profile-wrap .cap{font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600;margin-bottom:4px}
+canvas#prof{width:100%;height:96px;display:block}
+.actions{display:flex;align-items:center;gap:10px;margin-top:12px}
+.btn{border:0;border-radius:12px;height:52px;padding:0 16px;font-weight:600;font-size:16px;display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.btn svg{width:20px;height:20px}
+.btn.side{width:52px;padding:0;background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+.btn.main{flex:1;background:var(--blaze);color:#fff;letter-spacing:.04em;text-transform:uppercase;font-family:var(--f-num);font-size:20px}
+.btn.alt{flex:1;background:var(--pine);color:var(--chalk);text-transform:uppercase;font-family:var(--f-num);font-size:20px;letter-spacing:.04em}
+.btn.ghost{background:var(--bg);color:var(--ink);border:1px solid var(--line)}
+.recdot{width:10px;height:10px;border-radius:50%;background:#fff;animation:blink 1.4s infinite}
+@keyframes blink{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.recdot{animation:none}}
+
+/* hojas modales */
+.scrim{position:fixed;inset:0;background:rgba(10,20,14,.45);z-index:2000;display:flex;align-items:flex-end;justify-content:center}
+.sheet{background:var(--panel);width:100%;max-width:560px;max-height:86%;overflow:auto;border-radius:18px 18px 0 0;
+  padding:18px max(16px,env(safe-area-inset-right,0px)) calc(env(safe-area-inset-bottom,0px) + 18px) max(16px,env(safe-area-inset-left,0px));display:grid;gap:14px}
+.sheet h2{margin:0;font-family:var(--f-num);font-size:24px;font-weight:600;letter-spacing:.02em;text-wrap:balance}
+.sheet p{margin:0;color:var(--muted);line-height:1.45}
+.sh-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.menu-list{display:grid;gap:2px}
+.menu-item{display:flex;align-items:center;gap:14px;border:0;background:transparent;text-align:left;padding:12px 6px;border-radius:10px;font-size:16px}
+.menu-item:active{background:var(--bg)}
+.menu-item svg{width:22px;height:22px;color:var(--pine);flex:none}
+:root[data-theme="dark"] .menu-item svg{color:#8fd0a8}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .menu-item svg{color:#8fd0a8}}
+.menu-item span small{display:block;color:var(--muted);font-size:13px}
+.field{display:grid;gap:6px}
+.field label{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600}
+.field input,.field select{height:46px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);padding:0 12px;font:inherit;font-size:16px}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.row .btn{flex:1;min-width:120px}
+.trk{border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;gap:8px}
+.trk .t1{font-weight:600}
+.trk .t2{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+.trk .row .btn{height:38px;font-size:14px;min-width:0;padding:0 10px}
+.btn.danger{background:transparent;color:var(--bad);border:1px solid var(--line)}
+.btn.danger.armed{background:var(--bad);color:#fff}
+.coords{font-family:var(--f-num);font-size:26px;font-weight:600;font-variant-numeric:tabular-nums;user-select:all;-webkit-user-select:all}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-variant-numeric:tabular-nums}
+.kv dt{color:var(--muted)}.kv dd{margin:0}
+.sos{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;justify-content:space-between;align-items:center;gap:10px}
+.sos a{color:var(--blaze);font-family:var(--f-num);font-size:28px;font-weight:700;text-decoration:none}
+.bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--pine);transition:width .2s}
+.layers{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.layer-opt{border:2px solid var(--line);background:var(--bg);border-radius:12px;padding:12px 6px;font-weight:600}
+.layer-opt.sel{border-color:var(--pine);background:var(--panel)}
+.empty{color:var(--muted);text-align:center;padding:18px 0}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--panel-h) + 14px);z-index:3000;background:var(--pine);color:var(--chalk);
+  padding:10px 16px;border-radius:10px;box-shadow:var(--shadow);font-weight:500;max-width:calc(100% - 32px);text-align:center}
+
+/* marcadores */
+.me{position:relative;width:22px;height:22px}
+.me .dot{position:absolute;inset:3px;border-radius:50%;background:#1a73e8;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)}
+.me .cone{position:absolute;left:50%;top:50%;width:0;height:0;margin-left:-14px;margin-top:-34px;border-left:14px solid transparent;border-right:14px solid transparent;
+  border-bottom:30px solid rgba(26,115,232,.32);transform-origin:14px 34px}
+.pin{width:26px;height:26px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:var(--pine);border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)}
+.pin.route{background:var(--route)}
+.endpt{width:16px;height:16px;border-radius:50%;border:3px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)}
+.leaflet-popup-content{font-family:var(--f-body);font-size:14px}
+.pop-del{margin-top:6px;border:1px solid #ddd;background:#fff;border-radius:8px;padding:4px 10px;color:#c8102e}
+</style>
+</head>
+<body>
+<div id="map" aria-label="Mapa"></div>
+
+<div class="top">
+  <div class="chip">
+    <span class="blaze" aria-hidden="true"><i></i><i></i></span>
+    <span class="name">Senda</span>
+    <span class="gps" id="gps"><b></b><span id="gpsTxt">Buscando GPS…</span></span>
+  </div>
+  <div class="routebar" id="routebar" hidden>
+    <div class="rb-main">
+      <div class="rb-name" id="rbName"></div>
+      <div class="rb-sub" id="rbSub"></div>
+    </div>
+    <button class="x" id="rbClose" aria-label="Quitar ruta"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  </div>
+</div>
+
+<div class="fab-col">
+  <button class="fab on" id="btnLocate" aria-label="Seguir mi posición">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>
+  </button>
+  <button class="fab" id="btnLayers" aria-label="Tipo de mapa">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>
+  </button>
+  <button class="fab" id="btnCoords" aria-label="Mis coordenadas y emergencia">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s7-6.2 7-12a7 7 0 10-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>
+  </button>
+</div>
+
+<section class="panel" id="panel">
+  <button class="handle" id="handle" aria-label="Más datos"></button>
+  <div class="stats">
+    <div class="stat"><div class="l">Distancia</div><div class="v" id="sDist">0,00<small>km</small></div></div>
+    <div class="stat"><div class="l">Tiempo</div><div class="v" id="sTime">0:00:00</div></div>
+    <div class="stat"><div class="l">Subida</div><div class="v" id="sGain">0<small>m</small></div></div>
+    <div class="stat"><div class="l">Altitud</div><div class="v" id="sAlt">–<small>m</small></div></div>
+  </div>
+  <div class="more" id="more" hidden>
+    <div class="stats">
+      <div class="stat"><div class="l">Ritmo</div><div class="v" id="sPace">–<small>/km</small></div></div>
+      <div class="stat"><div class="l">Vel. media</div><div class="v" id="sSpeed">–<small>km/h</small></div></div>
+      <div class="stat"><div class="l">Bajada</div><div class="v" id="sLoss">0<small>m</small></div></div>
+      <div class="stat"><div class="l">En mov.</div><div class="v" id="sMove">0:00</div></div>
+    </div>
+    <div class="profile-wrap">
+      <div class="cap" id="profCap">Perfil de altitud</div>
+      <canvas id="prof"></canvas>
+    </div>
+  </div>
+  <div class="actions" id="actions"></div>
+</section>
+
+<div class="scrim" id="scrim" hidden><div class="sheet" id="sheet" role="dialog" aria-modal="true"></div></div>
+<div class="toast" id="toast" hidden></div>
+<input type="file" id="gpxInput" accept=".gpx,application/gpx+xml,application/xml,text/xml" hidden>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+"use strict";
+/* ---------- utilidades ---------- */
+const $ = s => document.querySelector(s);
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { toast('No queda espacio para guardar en el móvil'); return false; } },
+  del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+};
+const R = 6371008.8, RAD = Math.PI / 180;
+function hav(a, b) {
+  const dLat = (b[0] - a[0]) * RAD, dLon = (b[1] - a[1]) * RAD;
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * RAD) * Math.cos(b[0] * RAD) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+const nf1 = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const nf2 = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const nf0 = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 });
+const km = m => (m < 10000 ? nf2 : nf1).format(m / 1000);
+function hms(ms) { const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), ss = s % 60; return `${h}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`; }
+function hm(ms) { const m = Math.floor(ms / 60000); return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; }
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+let toastT;
+function toast(msg, ms = 2600) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, ms); }
+function vibrate(p) { try { navigator.vibrate && navigator.vibrate(p); } catch (e) {} }
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+/* ---------- mapa ---------- */
+const LAYERS = {
+  topo: { name: 'Topográfico', url: 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png', nat: 17, attr: 'Datos © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, SRTM · Estilo © <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)', kb: 25 },
+  osm: { name: 'Calles', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', nat: 19, attr: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>', kb: 18 },
+  sat: { name: 'Satélite', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', nat: 19, attr: 'Imágenes © Esri', kb: 30 }
+};
+let layerKey = LS.get('senda.layer', 'topo');
+if (!LAYERS[layerKey]) layerKey = 'topo';
+const lastView = LS.get('senda.view', null);
+const map = L.map('map', { zoomControl: false, attributionControl: false, maxZoom: 19, tap: false })
+  .setView(lastView ? [lastView[0], lastView[1]] : [40.42, -3.70], lastView ? lastView[2] : 6);
+L.control.attribution({ position: 'bottomright', prefix: false }).addTo(map);
+L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(map);
+let baseLayer;
+function setLayer(k) {
+  layerKey = k; LS.set('senda.layer', k);
+  if (baseLayer) map.removeLayer(baseLayer);
+  const L0 = LAYERS[k];
+  baseLayer = L.tileLayer(L0.url, { maxNativeZoom: L0.nat, maxZoom: 19, attribution: L0.attr, crossOrigin: true }).addTo(map);
+}
+setLayer(layerKey);
+map.on('moveend', () => { const c = map.getCenter(); LS.set('senda.view', [c.lat, c.lng, map.getZoom()]); });
+
+/* ---------- estado ---------- */
+let pos = null;           // última posición GPS
+let heading = null;       // brújula
+let follow = true;
+let firstFix = true;
+let rec = LS.get('senda.rec', null); // grabación en curso
+let route = LS.get('senda.route', null);
+let pins = LS.get('senda.pins', []);
+let expanded = false;
+let wakeLock = null;
+
+/* ---------- capas de dibujo ---------- */
+const trackLine = L.polyline([], { color: css('--track') || '#c8102e', weight: 5, opacity: .9, lineJoin: 'round' }).addTo(map);
+const routeLine = L.polyline([], { color: css('--route') || '#7a3fd1', weight: 6, opacity: .75, dashArray: null }).addTo(map);
+const viewLine = L.polyline([], { color: '#1a73e8', weight: 4, opacity: .8, dashArray: '8 6' }).addTo(map);
+const markers = L.layerGroup().addTo(map);
+const routeMarks = L.layerGroup().addTo(map);
+const meIcon = L.divIcon({ className: '', html: '<div class="me"><div class="cone" id="cone" style="display:none"></div><div class="dot"></div></div>', iconSize: [22, 22], iconAnchor: [11, 11] });
+let meMarker = null, accCircle = null;
+
+/* ---------- GPS ---------- */
+function setGpsChip() {
+  const g = $('#gps'), t = $('#gpsTxt');
+  g.classList.remove('good', 'ok', 'bad');
+  if (!pos) return;
+  const a = pos.acc;
+  g.classList.add(a <= 15 ? 'good' : a <= 35 ? 'ok' : 'bad');
+  t.textContent = `GPS ±${nf0.format(a)} m`;
+}
+function onPos(p) {
+  const c = p.coords;
+  pos = { lat: c.latitude, lon: c.longitude, acc: c.accuracy, alt: c.altitude, speed: c.speed, gpsHeading: c.heading, t: p.timestamp || Date.now() };
+  const ll = [pos.lat, pos.lon];
+  if (!meMarker) {
+    meMarker = L.marker(ll, { icon: meIcon, interactive: false, zIndexOffset: 1000 }).addTo(map);
+    accCircle = L.circle(ll, { radius: pos.acc, stroke: false, fillColor: '#1a73e8', fillOpacity: .12, interactive: false }).addTo(map);
+  } else { meMarker.setLatLng(ll); accCircle.setLatLng(ll).setRadius(pos.acc); }
+  if (pos.speed > 0.8 && pos.gpsHeading != null && !isNaN(pos.gpsHeading) && heading == null) setCone(pos.gpsHeading);
+  if (firstFix) { firstFix = false; map.setView(ll, Math.max(map.getZoom(), 15)); }
+  else if (follow) map.panTo(ll, { animate: true, duration: .4 });
+  setGpsChip();
+  if (rec && rec.status === 'rec') addPoint(pos);
+  if (route) updateRouteProgress();
+  renderStats();
+}
+function onPosErr(e) {
+  const t = $('#gpsTxt');
+  if (e.code === 1) { t.textContent = 'GPS sin permiso'; toast('Activa el permiso de ubicación para esta web en los ajustes del navegador', 5000); }
+  else if (e.code === 3) t.textContent = 'Buscando GPS…';
+  else t.textContent = 'GPS no disponible';
+}
+let watchId = null;
+function startGeo() {
+  if (!('geolocation' in navigator)) { $('#gpsTxt').textContent = 'Sin GPS'; return; }
+  if (watchId != null) navigator.geolocation.clearWatch(watchId);
+  watchId = navigator.geolocation.watchPosition(onPos, onPosErr, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+}
+startGeo();
+
+/* brújula */
+function setCone(deg) {
+  const c = document.getElementById('cone'); if (!c) return;
+  c.style.display = 'block'; c.style.transform = `rotate(${deg}deg)`;
+}
+let orientationAsked = false;
+function onOrient(e) {
+  let h = null;
+  if (typeof e.webkitCompassHeading === 'number') h = e.webkitCompassHeading;
+  else if (e.absolute && typeof e.alpha === 'number') h = 360 - e.alpha;
+  if (h == null) return;
+  const so = (screen.orientation && screen.orientation.angle) || 0;
+  heading = (h + so + 360) % 360; setCone(heading);
+}
+async function enableCompass() {
+  if (orientationAsked) return; orientationAsked = true;
+  try {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const r = await DeviceOrientationEvent.requestPermission(); if (r !== 'granted') return;
+      window.addEventListener('deviceorientation', onOrient, true);
+    } else if ('ondeviceorientationabsolute' in window) window.addEventListener('deviceorientationabsolute', onOrient, true);
+    else window.addEventListener('deviceorientation', onOrient, true);
+  } catch (e) {}
+}
+
+/* seguir posición */
+function setFollow(v) { follow = v; $('#btnLocate').classList.toggle('on', v); }
+map.on('dragstart', () => setFollow(false));
+$('#btnLocate').onclick = () => {
+  enableCompass();
+  setFollow(true);
+  if (pos) map.setView([pos.lat, pos.lon], Math.max(map.getZoom(), 15)); else { startGeo(); toast('Buscando tu posición…'); }
+};
+
+/* ---------- wake lock (pantalla encendida mientras grabas) ---------- */
+async function lockScreen() { try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => wakeLock = null); } } catch (e) {} }
+function unlockScreen() { try { wakeLock && wakeLock.release(); } catch (e) {} wakeLock = null; }
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') { if (rec && rec.status === 'rec') lockScreen(); startGeo(); }
+});
+
+/* ---------- grabación ---------- */
+const ACC_MAX = 35, MIN_D = 4, ELEV_STEP = 4;
+function newRec() {
+  const now = Date.now();
+  return { status: 'rec', startWall: now, resumeT: now, activeMs: 0, moveMs: 0, dist: 0, gain: 0, loss: 0, eSm: null, eRef: null, maxAlt: null, minAlt: null, segs: [[]], wpts: [] };
+}
+let saveT;
+function saveRecSoon() { clearTimeout(saveT); saveT = setTimeout(() => { if (rec) LS.set('senda.rec', rec); else LS.del('senda.rec'); }, 2000); }
+function saveRecNow() { clearTimeout(saveT); if (rec) LS.set('senda.rec', rec); else LS.del('senda.rec'); }
+window.addEventListener('pagehide', saveRecNow);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveRecNow(); });
+
+function elevUpdate(r, alt) {
+  if (alt == null || isNaN(alt)) return;
+  r.eSm = r.eSm == null ? alt : r.eSm + 0.35 * (alt - r.eSm);
+  if (r.eRef == null) r.eRef = r.eSm;
+  const d = r.eSm - r.eRef;
+  if (d >= ELEV_STEP) { r.gain += d; r.eRef = r.eSm; } else if (d <= -ELEV_STEP) { r.loss -= d; r.eRef = r.eSm; }
+  r.maxAlt = r.maxAlt == null ? r.eSm : Math.max(r.maxAlt, r.eSm);
+  r.minAlt = r.minAlt == null ? r.eSm : Math.min(r.minAlt, r.eSm);
+}
+function addPoint(p) {
+  if (p.acc > ACC_MAX) return;
+  const seg = rec.segs[rec.segs.length - 1];
+  const pt = [+p.lat.toFixed(6), +p.lon.toFixed(6), p.alt != null ? Math.round(p.alt * 10) / 10 : null, p.t];
+  if (seg.length) {
+    const last = seg[seg.length - 1];
+    const d = hav(last, pt);
+    if (d < Math.max(MIN_D, p.acc * 0.5)) return;
+    const dt = Math.max(1, (pt[3] - last[3]) / 1000);
+    if (d / dt > 15) return; // salto imposible a pie
+    rec.dist += d;
+    rec.moveMs += Math.min(dt, d / 0.3) * 1000;
+  }
+  seg.push(pt);
+  elevUpdate(rec, pt[2]);
+  const rings = trackLine.getLatLngs();
+  if (!rings.length || rings.length < rec.segs.length) drawTrack(); else trackLine.addLatLng([pt[0], pt[1]], rings[rings.length - 1]);
+  saveRecSoon();
+  profDirty = true;
+}
+function drawTrack() {
+  trackLine.setStyle({ color: css('--track') });
+  trackLine.setLatLngs(rec ? rec.segs.map(s => s.map(p => [p[0], p[1]])) : []);
+}
+function elapsed() { if (!rec) return 0; return rec.activeMs + (rec.status === 'rec' ? Date.now() - rec.resumeT : 0); }
+
+function startRec() {
+  rec = newRec(); drawTrack(); lockScreen(); saveRecNow(); enableCompass();
+  if (pos && pos.acc <= ACC_MAX) addPoint(pos);
+  vibrate(60); renderActions(); renderStats(); toast('Grabando ruta');
+}
+function pauseRec() { rec.activeMs += Date.now() - rec.resumeT; rec.status = 'paused'; unlockScreen(); saveRecNow(); renderActions(); renderStats(); }
+function resumeRec() {
+  rec.status = 'rec'; rec.resumeT = Date.now();
+  if (rec.segs[rec.segs.length - 1].length) rec.segs.push([]);
+  lockScreen(); saveRecNow(); renderActions();
+}
+function finishRec() {
+  if (rec.status === 'rec') pauseRec();
+  const d = new Date(rec.startWall);
+  const def = 'Ruta ' + d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) + ' ' + d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+  openSheet(`
+    <h2>Terminar ruta</h2>
+    <p>${km(rec.dist)} km · ${hms(elapsed())} · ↑ ${nf0.format(rec.gain)} m</p>
+    <div class="field"><label for="trkName">Nombre</label><input id="trkName" value="${esc(def)}" maxlength="80"></div>
+    <div class="row"><button class="btn alt" id="saveTrk">Guardar</button></div>
+    <div class="row"><button class="btn ghost" id="backTrk">Seguir grabando</button><button class="btn danger" id="discardTrk">Descartar</button></div>`);
+  $('#saveTrk').onclick = () => {
+    const tracks = LS.get('senda.tracks', []);
+    const t = { id: 't' + rec.startWall, name: $('#trkName').value.trim() || def, date: rec.startWall, segs: rec.segs.filter(s => s.length), wpts: rec.wpts,
+      dist: rec.dist, gain: rec.gain, loss: rec.loss, moveMs: rec.moveMs, elapsedMs: elapsed(), maxAlt: rec.maxAlt, minAlt: rec.minAlt };
+    tracks.unshift(t);
+    if (!LS.set('senda.tracks', tracks)) return;
+    rec = null; saveRecNow(); drawTrack(); drawPins(); closeSheet(); renderActions(); renderStats(); toast('Ruta guardada');
+  };
+  $('#backTrk').onclick = () => { closeSheet(); resumeRec(); };
+  armDanger($('#discardTrk'), 'Pulsa otra vez para borrar', () => { rec = null; saveRecNow(); drawTrack(); drawPins(); closeSheet(); renderActions(); renderStats(); toast('Ruta descartada'); });
+}
+function armDanger(btn, armedTxt, fn) {
+  let armed = false, t;
+  btn.onclick = () => {
+    if (armed) { clearTimeout(t); fn(); return; }
+    armed = true; const orig = btn.textContent; btn.textContent = armedTxt; btn.classList.add('armed');
+    t = setTimeout(() => { armed = false; btn.textContent = orig; btn.classList.remove('armed'); }, 3500);
+  };
+}
+
+/* ---------- puntos de interés ---------- */
+function pinIcon(cls) { return L.divIcon({ className: '', html: `<div class="pin ${cls || ''}"></div>`, iconSize: [26, 26], iconAnchor: [3, 26], popupAnchor: [10, -24] }); }
+function drawPins() {
+  markers.clearLayers();
+  const all = pins.map((p, i) => ({ ...p, src: 'pins', i })).concat(rec ? rec.wpts.map((p, i) => ({ ...p, src: 'rec', i })) : []);
+  all.forEach(p => {
+    const m = L.marker([p.lat, p.lon], { icon: pinIcon() }).addTo(markers);
+    const div = document.createElement('div');
+    div.innerHTML = `<b>${esc(p.name)}</b><br><span style="font-variant-numeric:tabular-nums">${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}${p.alt != null ? ' · ' + nf0.format(p.alt) + ' m' : ''}</span><br>`;
+    const b = document.createElement('button'); b.className = 'pop-del'; b.textContent = 'Borrar punto';
+    b.onclick = () => { if (p.src === 'pins') { pins.splice(p.i, 1); LS.set('senda.pins', pins); } else { rec.wpts.splice(p.i, 1); saveRecNow(); } drawPins(); };
+    div.appendChild(b); m.bindPopup(div);
+  });
+}
+function addWaypoint() {
+  const src = pos ? { lat: pos.lat, lon: pos.lon, alt: pos.alt } : (() => { const c = map.getCenter(); return { lat: c.lat, lon: c.lng, alt: null }; })();
+  const n = (rec ? rec.wpts.length : pins.length) + 1;
+  openSheet(`
+    <h2>Marcar punto</h2>
+    <p>${pos ? 'En tu posición actual' : 'En el centro del mapa (aún no hay GPS)'}: ${src.lat.toFixed(5)}, ${src.lon.toFixed(5)}</p>
+    <div class="field"><label for="wpName">Nombre</label><input id="wpName" value="Punto ${n}" maxlength="60"></div>
+    <div class="row"><button class="btn ghost" id="wpCancel">Cancelar</button><button class="btn alt" id="wpOk">Guardar punto</button></div>`);
+  $('#wpCancel').onclick = closeSheet;
+  $('#wpOk').onclick = () => {
+    const w = { ...src, name: $('#wpName').value.trim() || `Punto ${n}`, t: Date.now() };
+    if (rec) { rec.wpts.push(w); saveRecNow(); } else { pins.push(w); LS.set('senda.pins', pins); }
+    drawPins(); closeSheet(); vibrate(40); toast('Punto guardado');
+  };
+}
+
+/* ---------- ruta a seguir (GPX) ---------- */
+function prepRoute(name, pts, wpts) {
+  const cum = [0], gcum = [0]; let g = 0, ref = null, sm = null;
+  for (let i = 0; i < pts.length; i++) {
+    if (i) cum.push(cum[i - 1] + hav(pts[i - 1], pts[i]));
+    const e = pts[i][2];
+    if (e != null) { sm = sm == null ? e : sm + 0.5 * (e - sm); if (ref == null) ref = sm; if (sm - ref >= 3) { g += sm - ref; ref = sm; } else if (sm - ref <= -3) ref = sm; }
+    if (i) gcum.push(g);
+  }
+  return { name, pts, cum, gcum, wpts: wpts || [] };
+}
+function parseGPX(txt, fallbackName) {
+  const doc = new DOMParser().parseFromString(txt, 'application/xml');
+  if (doc.querySelector('parsererror')) throw new Error('El archivo no es un GPX válido');
+  const get = (n, sel) => [...n.getElementsByTagName(sel)];
+  let nodes = get(doc, 'trkpt'); if (!nodes.length) nodes = get(doc, 'rtept');
+  const pts = nodes.map(n => { const e = n.getElementsByTagName('ele')[0]; return [+n.getAttribute('lat'), +n.getAttribute('lon'), e ? +e.textContent : null]; })
+    .filter(p => isFinite(p[0]) && isFinite(p[1]));
+  const wpts = get(doc, 'wpt').map(n => { const nm = n.getElementsByTagName('name')[0]; return { lat: +n.getAttribute('lat'), lon: +n.getAttribute('lon'), name: nm ? nm.textContent : 'Punto' }; });
+  if (pts.length < 2 && !wpts.length) throw new Error('El GPX no tiene puntos de ruta');
+  const nmEl = doc.querySelector('trk > name, rte > name, metadata > name');
+  return prepRoute((nmEl && nmEl.textContent.trim()) || fallbackName, pts, wpts);
+}
+function setRoute(r, fit = true) {
+  route = r;
+  if (r) LS.set('senda.route', r); else LS.del('senda.route');
+  drawRoute();
+  if (r && fit && r.pts.length) map.fitBounds(L.latLngBounds(r.pts.map(p => [p[0], p[1]])), { padding: [40, 40], paddingBottomRight: [40, 200] });
+  if (r && fit) setFollow(false);
+  profDirty = true; renderStats();
+}
+function drawRoute() {
+  routeMarks.clearLayers();
+  routeLine.setStyle({ color: css('--route') });
+  if (!route) { routeLine.setLatLngs([]); $('#routebar').hidden = true; return; }
+  routeLine.setLatLngs(route.pts.map(p => [p[0], p[1]]));
+  if (route.pts.length) {
+    const s = route.pts[0], e = route.pts[route.pts.length - 1];
+    L.marker([s[0], s[1]], { icon: L.divIcon({ className: '', html: '<div class="endpt" style="background:#2f8f4e"></div>', iconSize: [16, 16] }), interactive: false }).addTo(routeMarks);
+    L.marker([e[0], e[1]], { icon: L.divIcon({ className: '', html: '<div class="endpt" style="background:#16231c"></div>', iconSize: [16, 16] }), interactive: false }).addTo(routeMarks);
+  }
+  route.wpts.forEach(w => L.marker([w.lat, w.lon], { icon: pinIcon('route') }).bindPopup(esc(w.name)).addTo(routeMarks));
+  $('#routebar').hidden = false;
+  $('#rbName').textContent = route.name;
+  const total = route.cum[route.cum.length - 1] || 0;
+  $('#rbSub').textContent = `${km(total)} km · ↑ ${nf0.format(route.gcum[route.gcum.length - 1] || 0)} m`;
+  $('#routebar').classList.remove('off');
+}
+let offRoute = false, routeIdx = null;
+function nearestOnRoute(lat, lon) {
+  const c = Math.cos(lat * RAD), kx = 111320 * c, ky = 110540;
+  let best = { d: Infinity, along: 0, i: 0 };
+  const P = route.pts;
+  for (let i = 0; i < P.length - 1; i++) {
+    const ax = (P[i][1] - lon) * kx, ay = (P[i][0] - lat) * ky, bx = (P[i + 1][1] - lon) * kx, by = (P[i + 1][0] - lat) * ky;
+    const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+    let t = L2 ? -(ax * dx + ay * dy) / L2 : 0; t = Math.max(0, Math.min(1, t));
+    const px = ax + t * dx, py = ay + t * dy, d = Math.hypot(px, py);
+    if (d < best.d) best = { d, along: route.cum[i] + t * (route.cum[i + 1] - route.cum[i]), i };
+  }
+  return best;
+}
+function updateRouteProgress() {
+  if (!route || !pos || route.pts.length < 2) return;
+  const n = nearestOnRoute(pos.lat, pos.lon);
+  routeIdx = n;
+  const total = route.cum[route.cum.length - 1];
+  const left = Math.max(0, total - n.along);
+  const gainLeft = Math.max(0, route.gcum[route.gcum.length - 1] - route.gcum[n.i]);
+  const limit = 50 + Math.min(pos.acc, 40);
+  const isOff = n.d > limit;
+  if (isOff && !offRoute) { vibrate([200, 100, 200]); toast('Te has salido de la ruta', 4000); }
+  offRoute = isOff;
+  $('#routebar').classList.toggle('off', isOff);
+  $('#rbSub').textContent = isOff
+    ? `Fuera de ruta · a ${nf0.format(n.d)} m del trazado`
+    : `Faltan ${km(left)} km · ↑ ${nf0.format(gainLeft)} m por subir · llevas ${km(n.along)} km`;
+  profDirty = true;
+}
+$('#rbClose').onclick = () => { setRoute(null); toast('Ruta quitada del mapa'); };
+$('#gpxInput').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try { const r = parseGPX(await f.text(), f.name.replace(/\.gpx$/i, '')); setRoute(r); closeSheet(); toast(`Ruta cargada: ${km(r.cum[r.cum.length - 1] || 0)} km`); }
+  catch (err) { toast(err.message || 'No se pudo leer el archivo', 4000); }
+};
+
+/* ---------- exportar GPX ---------- */
+function toGPX(t) {
+  const iso = ms => new Date(ms).toISOString();
+  const w = (t.wpts || []).map(p => `  <wpt lat="${p.lat}" lon="${p.lon}">${p.alt != null ? `<ele>${p.alt.toFixed(1)}</ele>` : ''}<name>${esc(p.name)}</name></wpt>`).join('\n');
+  const segs = t.segs.map(s => '    <trkseg>\n' + s.map(p => `      <trkpt lat="${p[0]}" lon="${p[1]}">${p[2] != null ? `<ele>${p[2]}</ele>` : ''}${p[3] ? `<time>${iso(p[3])}</time>` : ''}</trkpt>`).join('\n') + '\n    </trkseg>').join('\n');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Senda" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>${esc(t.name)}</name><time>${iso(t.date)}</time></metadata>
+${w}
+  <trk><name>${esc(t.name)}</name>
+${segs}
+  </trk>
+</gpx>`;
+}
+async function exportGPX(t) {
+  const name = (t.name || 'ruta').replace(/[^\w\-áéíóúñÁÉÍÓÚÑ ]+/g, '').trim().replace(/\s+/g, '_') + '.gpx';
+  const blob = new Blob([toGPX(t)], { type: 'application/gpx+xml' });
+  try {
+    const file = new File([blob], name, { type: 'application/gpx+xml' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: t.name }); return; }
+  } catch (e) { if (e && e.name === 'AbortError') return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+
+/* ---------- perfil de altitud ---------- */
+let profDirty = true;
+function drawProfile() {
+  if (!expanded) return;
+  profDirty = false;
+  const cv = $('#prof'), dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight; if (!W) return;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  let xs = [], ys = [], cap, color, mark = null;
+  if (route && route.pts.some(p => p[2] != null)) {
+    route.pts.forEach((p, i) => { if (p[2] != null) { xs.push(route.cum[i]); ys.push(p[2]); } });
+    cap = 'Perfil de la ruta'; color = css('--route');
+    if (routeIdx && !offRoute) mark = routeIdx.along;
+  } else if (rec) {
+    let d = 0, prev = null;
+    rec.segs.forEach(s => s.forEach(p => { if (prev) d += hav(prev, p); prev = p; if (p[2] != null) { xs.push(d); ys.push(p[2]); } }));
+    cap = 'Perfil de tu recorrido'; color = css('--track');
+    if (xs.length) mark = xs[xs.length - 1];
+  }
+  $('#profCap').textContent = cap || 'Perfil de altitud';
+  const muted = css('--muted'), line = css('--line');
+  g.font = '11px ' + css('--f-body'); g.fillStyle = muted;
+  if (xs.length < 2) { g.textAlign = 'center'; g.fillText('Sin datos de altitud todavía', W / 2, H / 2); return; }
+  let lo = Math.min(...ys), hi = Math.max(...ys); if (hi - lo < 40) { const m = (hi + lo) / 2; lo = m - 20; hi = m + 20; }
+  const pad = { l: 38, r: 6, t: 6, b: 16 };
+  const X = d => pad.l + (d / xs[xs.length - 1]) * (W - pad.l - pad.r);
+  const Y = e => pad.t + (1 - (e - lo) / (hi - lo)) * (H - pad.t - pad.b);
+  g.strokeStyle = line; g.lineWidth = 1; g.textAlign = 'right'; g.textBaseline = 'middle';
+  [lo, (lo + hi) / 2, hi].forEach(v => { g.beginPath(); g.moveTo(pad.l, Y(v)); g.lineTo(W - pad.r, Y(v)); g.stroke(); g.fillText(nf0.format(v) + ' m', pad.l - 4, Y(v)); });
+  g.textAlign = 'left'; g.textBaseline = 'alphabetic'; g.fillText('0', pad.l, H - 3);
+  g.textAlign = 'right'; g.fillText(km(xs[xs.length - 1]) + ' km', W - pad.r, H - 3);
+  g.beginPath(); g.moveTo(X(xs[0]), Y(ys[0])); for (let i = 1; i < xs.length; i++) g.lineTo(X(xs[i]), Y(ys[i]));
+  g.strokeStyle = color; g.lineWidth = 2; g.stroke();
+  g.lineTo(X(xs[xs.length - 1]), H - pad.b); g.lineTo(X(xs[0]), H - pad.b); g.closePath();
+  g.globalAlpha = .15; g.fillStyle = color; g.fill(); g.globalAlpha = 1;
+  if (mark != null) {
+    let j = 0; while (j < xs.length - 1 && xs[j] < mark) j++;
+    g.fillStyle = '#1a73e8'; g.strokeStyle = css('--panel'); g.lineWidth = 2;
+    g.beginPath(); g.arc(X(mark), Y(ys[j]), 5, 0, 7); g.fill(); g.stroke();
+  }
+}
+
+/* ---------- panel ---------- */
+const ICON = {
+  pin: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/></svg>',
+  menu: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>',
+  pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>'
+};
+function renderActions() {
+  const a = $('#actions');
+  const side = `<button class="btn side" id="aPin" aria-label="Marcar punto">${ICON.pin}</button>`;
+  const menu = `<button class="btn side" id="aMenu" aria-label="Menú">${ICON.menu}</button>`;
+  if (!rec) a.innerHTML = `${side}<button class="btn main" id="aStart">Iniciar ruta</button>${menu}`;
+  else if (rec.status === 'rec') a.innerHTML = `${side}<button class="btn main" id="aPause"><span class="recdot"></span>Grabando · Pausar</button>${menu}`;
+  else a.innerHTML = `${side}<button class="btn alt" id="aResume">Reanudar</button><button class="btn main" id="aStop" style="flex:.8">Terminar</button>${menu}`;
+  $('#aPin').onclick = addWaypoint; $('#aMenu').onclick = openMenu;
+  const s = $('#aStart'); if (s) s.onclick = startRec;
+  const p = $('#aPause'); if (p) p.onclick = pauseRec;
+  const r = $('#aResume'); if (r) r.onclick = resumeRec;
+  const st = $('#aStop'); if (st) st.onclick = finishRec;
+}
+function setV(id, val, unit) { $(id).innerHTML = val + (unit ? `<small>${unit}</small>` : ''); }
+function renderStats() {
+  const r = rec;
+  setV('#sDist', km(r ? r.dist : 0), 'km');
+  setV('#sTime', hms(elapsed()));
+  setV('#sGain', nf0.format(r ? r.gain : 0), 'm');
+  const alt = pos && pos.alt != null ? pos.alt : null;
+  setV('#sAlt', alt != null ? nf0.format(alt) : '–', 'm');
+  if (expanded) {
+    const mv = r ? r.moveMs : 0, d = r ? r.dist : 0;
+    if (d > 50 && mv > 0) { const pace = mv / 60000 / (d / 1000); setV('#sPace', `${Math.floor(pace)}:${String(Math.round(pace % 1 * 60) % 60).padStart(2, '0')}`, '/km'); setV('#sSpeed', nf1.format(d / 1000 / (mv / 3600000)), 'km/h'); }
+    else { setV('#sPace', '–', '/km'); setV('#sSpeed', '–', 'km/h'); }
+    setV('#sLoss', nf0.format(r ? r.loss : 0), 'm');
+    setV('#sMove', hm(mv));
+    if (profDirty) drawProfile();
+  }
+}
+setInterval(() => { if (rec && rec.status === 'rec') renderStats(); }, 1000);
+$('#handle').onclick = () => { expanded = !expanded; $('#more').hidden = !expanded; profDirty = true; renderStats(); };
+new ResizeObserver(() => document.documentElement.style.setProperty('--panel-h', $('#panel').offsetHeight + 'px')).observe($('#panel'));
+
+/* ---------- hojas ---------- */
+function openSheet(html) { $('#sheet').innerHTML = html; $('#scrim').hidden = false; }
+function closeSheet() { $('#scrim').hidden = true; $('#sheet').innerHTML = ''; }
+$('#scrim').addEventListener('click', e => { if (e.target === $('#scrim')) closeSheet(); });
+const closeBtn = '<button class="x" data-close aria-label="Cerrar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>';
+$('#sheet').addEventListener('click', e => { if (e.target.closest('[data-close]')) closeSheet(); });
+
+let installEvt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; });
+function mi(id, icon, title, sub) { return `<button class="menu-item" id="${id}">${icon}<span>${title}${sub ? `<small>${sub}</small>` : ''}</span></button>`; }
+function openMenu() {
+  const tracks = LS.get('senda.tracks', []);
+  openSheet(`
+    <div class="sh-head"><h2>Senda</h2>${closeBtn}</div>
+    <div class="menu-list">
+      ${mi('mTracks', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19c4 0 3-6 8-6s4-6 8-6"/><circle cx="4" cy="19" r="1.5"/><circle cx="20" cy="7" r="1.5"/></svg>', 'Mis rutas', `${tracks.length} guardada${tracks.length === 1 ? '' : 's'}`)}
+      ${mi('mImport', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>', 'Abrir GPX para seguirlo', 'Wikiloc, AllTrails, Komoot, IGN…')}
+      ${mi('mOffline', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/></svg>', 'Mapas sin conexión', 'Descarga la zona antes de perder cobertura')}
+      ${installEvt ? mi('mInstall', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M12 7v7M9 11l3 3 3-3"/></svg>', 'Instalar en el móvil', 'Como una app, a pantalla completa') : ''}
+    </div>
+    <p style="font-size:13px">Consejo: deja la pantalla encendida (Senda la mantiene activa mientras grabas). Con la pantalla bloqueada el navegador deja de leer el GPS y se acorta la traza.</p>`);
+  $('#mTracks').onclick = openTracks;
+  $('#mImport').onclick = () => $('#gpxInput').click();
+  $('#mOffline').onclick = openOffline;
+  const ins = $('#mInstall'); if (ins) ins.onclick = async () => { installEvt.prompt(); installEvt = null; closeSheet(); };
+}
+
+function openTracks() {
+  const tracks = LS.get('senda.tracks', []);
+  openSheet(`<div class="sh-head"><h2>Mis rutas</h2>${closeBtn}</div>
+    ${tracks.length ? tracks.map((t, i) => `
+      <div class="trk">
+        <div class="t1">${esc(t.name)}</div>
+        <div class="t2">${new Date(t.date).toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })} · ${km(t.dist)} km · ${hm(t.elapsedMs)} h · ↑ ${nf0.format(t.gain)} m ↓ ${nf0.format(t.loss)} m</div>
+        <div class="row">
+          <button class="btn ghost" data-act="view" data-i="${i}">Ver</button>
+          <button class="btn ghost" data-act="follow" data-i="${i}">Seguir</button>
+          <button class="btn ghost" data-act="gpx" data-i="${i}">GPX</button>
+          <button class="btn danger" data-act="del" data-i="${i}">Borrar</button>
+        </div>
+      </div>`).join('') : '<div class="empty">Aún no has guardado ninguna ruta.</div>'}`);
+  $('#sheet').querySelectorAll('[data-act]').forEach(b => {
+    const t = tracks[+b.dataset.i];
+    if (b.dataset.act === 'view') b.onclick = () => {
+      viewLine.setLatLngs(t.segs.map(s => s.map(p => [p[0], p[1]])));
+      map.fitBounds(viewLine.getBounds(), { padding: [40, 40] }); setFollow(false); closeSheet();
+      toast('Mostrando ' + t.name + ' (línea discontinua azul)');
+    };
+    if (b.dataset.act === 'follow') b.onclick = () => {
+      const pts = t.segs.flat().map(p => [p[0], p[1], p[2]]);
+      setRoute(prepRoute(t.name, pts, t.wpts)); closeSheet();
+    };
+    if (b.dataset.act === 'gpx') b.onclick = () => exportGPX(t);
+    if (b.dataset.act === 'del') armDanger(b, '¿Seguro?', () => {
+      const all = LS.get('senda.tracks', []); all.splice(+b.dataset.i, 1); LS.set('senda.tracks', all); viewLine.setLatLngs([]); openTracks();
+    });
+  });
+}
+
+/* ---------- capas ---------- */
+$('#btnLayers').onclick = () => {
+  openSheet(`<div class="sh-head"><h2>Tipo de mapa</h2>${closeBtn}</div>
+    <div class="layers">${Object.entries(LAYERS).map(([k, v]) => `<button class="layer-opt ${k === layerKey ? 'sel' : ''}" data-k="${k}">${v.name}</button>`).join('')}</div>
+    <p style="font-size:13px">El topográfico muestra curvas de nivel cada 20 m (OpenTopoMap). Las zonas que ya has visto se guardan solas para usarlas sin cobertura.</p>`);
+  $('#sheet').querySelectorAll('.layer-opt').forEach(b => b.onclick = () => { setLayer(b.dataset.k); closeSheet(); });
+};
+
+/* ---------- coordenadas / emergencia ---------- */
+function dms(v, pos, neg) { const a = Math.abs(v), d = Math.floor(a), m = Math.floor((a - d) * 60), s = ((a - d) * 60 - m) * 60; return `${d}°${String(m).padStart(2, '0')}′${s.toFixed(1).padStart(4, '0')}″ ${v >= 0 ? pos : neg}`; }
+$('#btnCoords').onclick = () => {
+  if (!pos) { openSheet(`<div class="sh-head"><h2>Tu posición</h2>${closeBtn}</div><p>Todavía no hay señal GPS. Sal a cielo abierto y espera unos segundos.</p>
+    <div class="sos"><div><b>Emergencias</b><p style="font-size:13px">Funciona sin saldo y con cualquier operador</p></div><a href="tel:112">112</a></div>`); return; }
+  const txt = `${pos.lat.toFixed(6)}, ${pos.lon.toFixed(6)}`;
+  openSheet(`<div class="sh-head"><h2>Tu posición</h2>${closeBtn}</div>
+    <div class="coords" id="coordTxt">${txt}</div>
+    <dl class="kv">
+      <dt>Grados</dt><dd>${dms(pos.lat, 'N', 'S')} · ${dms(pos.lon, 'E', 'O')}</dd>
+      <dt>Altitud</dt><dd>${pos.alt != null ? nf0.format(pos.alt) + ' m' : 'sin dato'}</dd>
+      <dt>Precisión</dt><dd>±${nf0.format(pos.acc)} m</dd>
+    </dl>
+    <div class="row"><button class="btn alt" id="copyC">Copiar coordenadas</button></div>
+    <div class="sos"><div><b>Emergencias</b><p style="font-size:13px">Lee estas coordenadas al operador</p></div><a href="tel:112">112</a></div>`);
+  $('#copyC').onclick = async () => {
+    try { await navigator.clipboard.writeText(txt); toast('Coordenadas copiadas'); }
+    catch (e) { const r = document.createRange(); r.selectNodeContents($('#coordTxt')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); toast('Selecciónalas y copia'); }
+  };
+};
+
+/* ---------- mapas sin conexión ---------- */
+const TILE_CACHE = 'senda-tiles';
+function lon2x(lon, z) { return Math.floor((lon + 180) / 360 * 2 ** z); }
+function lat2y(lat, z) { const r = lat * RAD; return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * 2 ** z); }
+function tilesFor(bounds, z0, z1) {
+  const out = [];
+  for (let z = z0; z <= z1; z++) {
+    const x0 = lon2x(bounds.getWest(), z), x1 = lon2x(bounds.getEast(), z), y0 = lat2y(bounds.getNorth(), z), y1 = lat2y(bounds.getSouth(), z);
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) out.push({ z, x, y });
+  }
+  return out;
+}
+function tileUrl(k, t) { return LAYERS[k].url.replace('{z}', t.z).replace('{x}', t.x).replace('{y}', t.y); }
+let dlAbort = false;
+async function openOffline() {
+  let cached = 0;
+  try { if ('caches' in window) cached = (await (await caches.open(TILE_CACHE)).keys()).length; } catch (e) {}
+  const z = Math.round(map.getZoom()), maxZ = Math.min(LAYERS[layerKey].nat, 17);
+  const opts = []; for (let zz = Math.min(z + 1, maxZ); zz <= maxZ; zz++) opts.push(zz);
+  if (!opts.length) opts.push(maxZ);
+  const sel = opts.includes(16) ? 16 : opts[opts.length - 1];
+  openSheet(`<div class="sh-head"><h2>Mapas sin conexión</h2>${closeBtn}</div>
+    <p>Guarda la zona que ves ahora en pantalla (mapa ${LAYERS[layerKey].name.toLowerCase()}). Haz zoom hacia fuera para abarcar toda la ruta antes de descargar.</p>
+    ${route ? '<div class="row"><button class="btn ghost" id="fitRoute">Encuadrar la ruta cargada</button></div>' : ''}
+    <div class="field"><label for="zMax">Detalle máximo</label><select id="zMax">${opts.map(o => `<option value="${o}" ${o === sel ? 'selected' : ''}>Zoom ${o}${o >= 16 ? ' (senderos y curvas de nivel)' : o >= 14 ? ' (pistas y caminos)' : ''}</option>`).join('')}</select></div>
+    <div id="dlInfo" class="t2"></div>
+    <div class="bar" id="dlBar" hidden><i></i></div>
+    <div class="row"><button class="btn alt" id="dlGo">Descargar</button></div>
+    <p style="font-size:13px">Teselas guardadas en el móvil: <b>${nf0.format(cached)}</b></p>
+    <div class="row"><button class="btn danger" id="dlClear">Borrar mapas guardados</button></div>`);
+  const z0 = Math.max(Math.round(map.getZoom()) - 2, 8);
+  const calc = () => { const zz = +$('#zMax').value; const t = tilesFor(map.getBounds(), Math.min(z0, zz), zz); $('#dlInfo').textContent = `${nf0.format(t.length)} teselas · ~${nf0.format(t.length * LAYERS[layerKey].kb / 1024)} MB`; $('#dlGo').disabled = t.length > 4000; if (t.length > 4000) $('#dlInfo').textContent += ' · demasiado grande, acerca el mapa o baja el detalle'; return t; };
+  calc(); $('#zMax').onchange = calc;
+  const fr = $('#fitRoute'); if (fr) fr.onclick = () => { map.fitBounds(routeLine.getBounds(), { padding: [10, 10] }); setFollow(false); setTimeout(calc, 400); };
+  armDanger($('#dlClear'), 'Pulsa otra vez para borrar', async () => { try { await caches.delete(TILE_CACHE); } catch (e) {} toast('Mapas borrados'); openOffline(); });
+  $('#dlGo').onclick = async () => {
+    if (!('caches' in window)) { toast('Este navegador no permite guardar mapas'); return; }
+    const tiles = calc(); dlAbort = false;
+    try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
+    const btn = $('#dlGo'); btn.textContent = 'Cancelar'; btn.onclick = () => { dlAbort = true; };
+    $('#dlBar').hidden = false;
+    const cache = await caches.open(TILE_CACHE);
+    let done = 0, fail = 0, i = 0;
+    const worker = async () => {
+      while (i < tiles.length && !dlAbort) {
+        const url = tileUrl(layerKey, tiles[i++]);
+        try {
+          if (!(await cache.match(url))) {
+            let res; try { res = await fetch(url, { mode: 'cors' }); } catch (e) { res = await fetch(url, { mode: 'no-cors' }); }
+            if (res.ok || res.type === 'opaque') await cache.put(url, res); else fail++;
+          }
+        } catch (e) { fail++; }
+        done++;
+        const bar = $('#dlBar i'); if (bar) bar.style.width = (done / tiles.length * 100) + '%';
+        const info = $('#dlInfo'); if (info) info.textContent = `${nf0.format(done)} / ${nf0.format(tiles.length)} teselas`;
+      }
+    };
+    await Promise.all(Array.from({ length: 4 }, worker));
+    toast(dlAbort ? 'Descarga cancelada' : fail ? `Descarga terminada con ${fail} fallos` : 'Zona guardada para usar sin conexión', 3500);
+    if ($('#dlGo')) openOffline();
+  };
+}
+
+/* ---------- arranque ---------- */
+if (rec) {
+  // la página se recargó o el navegador la cerró durante la grabación: el tiempo sigue contando
+  drawTrack();
+  if (rec.status === 'rec') { lockScreen(); toast('Grabación recuperada'); }
+}
+if (route) drawRoute();
+drawPins(); renderActions(); renderStats();
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+const mq = matchMedia('(prefers-color-scheme: dark)'); mq.addEventListener && mq.addEventListener('change', () => { drawTrack(); drawRoute(); profDirty = true; renderStats(); });
+</script>
+</body>
+</html>
