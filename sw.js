@@ -1,5 +1,5 @@
 // Senda service worker: app shell offline + mapas cache-first
-const SHELL = 'senda-shell-v1';
+const SHELL = 'senda-shell-v2';
 const TILES = 'senda-tiles';
 const SHELL_FILES = [
   './', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png',
@@ -45,7 +45,7 @@ self.addEventListener('fetch', e => {
     e.respondWith((async () => {
       const cache = await caches.open(SHELL);
       try {
-        const res = await fetch(req);
+        const res = url.origin === location.origin ? await fetch(req.url, { cache: 'no-cache' }) : await fetch(req);
         if (res.ok || res.type === 'opaque') cache.put(req, res.clone());
         return res;
       } catch (_) {

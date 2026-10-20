@@ -25,6 +25,7 @@
   --line:#dde3dc;
   --route:#7a3fd1;     /* ruta importada a seguir */
   --track:#c8102e;     /* traza que grabas */
+  --dest:#d9480f;      /* destinos */
   --ok:#2f8f4e; --warn:#c98a00; --bad:#c8102e;
   --shadow:0 6px 24px rgba(16,35,25,.18);
   --f-num:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
@@ -152,6 +153,25 @@ canvas#prof{width:100%;height:96px;display:block}
 .pin.route{background:var(--route)}
 .endpt{width:16px;height:16px;border-radius:50%;border:3px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)}
 .leaflet-popup-content{font-family:var(--f-body);font-size:14px}
+
+/* destinos */
+.destbar{background:var(--panel);border-radius:12px;box-shadow:var(--shadow);padding:8px 10px 8px 8px;display:flex;gap:10px;align-items:center;
+  border:0;text-align:left;width:100%;max-width:min(520px,calc(100% - 58px));border-left:5px solid var(--dest)}
+.destbar .arrow{width:40px;height:40px;border-radius:50%;background:var(--dest);color:#fff;display:grid;place-items:center;flex:none}
+.destbar .arrow svg{width:22px;height:22px;transition:transform .3s}
+.destbar .db-main{flex:1;min-width:0}
+.destbar .db-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.destbar .db-sub{font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;margin-top:1px}
+.destbar.here{border-left-color:var(--ok)}.destbar.here .arrow{background:var(--ok)}
+.dmark{width:30px;height:30px;border-radius:50%;background:var(--dest);color:#fff;border:3px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.45);
+  display:grid;place-items:center;font-family:var(--f-num);font-weight:700;font-size:16px}
+.leaflet-tooltip.dtip{font-family:var(--f-num);font-weight:600;font-size:14px;padding:2px 7px;border:0;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+.fab.placing{background:var(--dest);color:#fff}
+.dnum{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--dest);color:#fff;font-family:var(--f-num);font-weight:700;flex:none}
+.trk .t1 input{flex:1;min-width:0;border:0;border-bottom:1px dashed var(--line);background:transparent;color:var(--ink);font:inherit;font-weight:600;padding:2px 0}
+.trk .t1{display:flex;align-items:center;gap:8px}
+.swatch{width:24px;height:8px;border-radius:4px;flex:none}
+.alt-sel{border-width:2px}
 .pop-del{margin-top:6px;border:1px solid #ddd;background:#fff;border-radius:8px;padding:4px 10px;color:#c8102e}
 </style>
 </head>
@@ -171,11 +191,18 @@ canvas#prof{width:100%;height:96px;display:block}
     </div>
     <button class="x" id="rbClose" aria-label="Quitar ruta"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
   </div>
+  <button class="destbar" id="destbar" hidden>
+    <span class="arrow"><svg id="dbArrow" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l6 18-6-4-6 4z"/></svg></span>
+    <span class="db-main"><span class="db-name" id="dbName"></span><span class="db-sub" id="dbSub" style="display:block"></span></span>
+  </button>
 </div>
 
 <div class="fab-col">
   <button class="fab on" id="btnLocate" aria-label="Seguir mi posición">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>
+  </button>
+  <button class="fab" id="btnDest" aria-label="Poner destino">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></svg>
   </button>
   <button class="fab" id="btnLayers" aria-label="Tipo de mapa">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg>
@@ -306,6 +333,7 @@ function onPos(p) {
   setGpsChip();
   if (rec && rec.status === 'rec') addPoint(pos);
   if (route) updateRouteProgress();
+  updateDests();
   renderStats();
 }
 function onPosErr(e) {
@@ -335,6 +363,7 @@ function onOrient(e) {
   if (h == null) return;
   const so = (screen.orientation && screen.orientation.angle) || 0;
   heading = (h + so + 360) % 360; setCone(heading);
+  renderDestbar();
 }
 async function enableCompass() {
   if (orientationAsked) return; orientationAsked = true;
@@ -691,6 +720,7 @@ function openMenu() {
     <div class="sh-head"><h2>Senda</h2>${closeBtn}</div>
     <div class="menu-list">
       ${mi('mTracks', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19c4 0 3-6 8-6s4-6 8-6"/><circle cx="4" cy="19" r="1.5"/><circle cx="20" cy="7" r="1.5"/></svg>', 'Mis rutas', `${tracks.length} guardada${tracks.length === 1 ? '' : 's'}`)}
+      ${mi('mDests', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></svg>', 'Destinos y caminos', dests.length ? `${dests.length} destino${dests.length === 1 ? '' : 's'}` : 'Mantén pulsado el mapa para añadir uno')}
       ${mi('mImport', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 19h16"/></svg>', 'Abrir GPX para seguirlo', 'Wikiloc, AllTrails, Komoot, IGN…')}
       ${mi('mOffline', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/></svg>', 'Mapas sin conexión', 'Descarga la zona antes de perder cobertura')}
       ${installEvt ? mi('mInstall', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M12 7v7M9 11l3 3 3-3"/></svg>', 'Instalar en el móvil', 'Como una app, a pantalla completa') : ''}
@@ -698,6 +728,7 @@ function openMenu() {
     <p style="font-size:13px">Consejo: deja la pantalla encendida (Senda la mantiene activa mientras grabas). Con la pantalla bloqueada el navegador deja de leer el GPS y se acorta la traza.</p>`);
   $('#mTracks').onclick = openTracks;
   $('#mImport').onclick = () => $('#gpxInput').click();
+  $('#mDests').onclick = openDests;
   $('#mOffline').onclick = openOffline;
   const ins = $('#mInstall'); if (ins) ins.onclick = async () => { installEvt.prompt(); installEvt = null; closeSheet(); };
 }
@@ -826,6 +857,172 @@ async function openOffline() {
   };
 }
 
+/* ---------- destinos y caminos (BRouter, senderos de OpenStreetMap) ---------- */
+let dests = LS.get('senda.dests', []);
+let destMarkers = [];
+let placing = false;
+let alts = [];
+const destLayer = L.layerGroup().addTo(map);
+const destLines = L.layerGroup().addTo(map);
+const altLayer = L.layerGroup().addTo(map);
+const ALT_COLORS = ['#0b7d8c', '#e67700', '#3b5bdb'];
+const CARD = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
+const PROFILES = { 'hiking-mountain': 'Senderos (montaña)', 'trekking': 'Pistas y caminos cómodos', 'shortest': 'El más corto' };
+function bearing(a, b) {
+  const f1 = a[0] * RAD, f2 = b[0] * RAD, dl = (b[1] - a[1]) * RAD;
+  const y = Math.sin(dl) * Math.cos(f2), x = Math.cos(f1) * Math.sin(f2) - Math.sin(f1) * Math.cos(f2) * Math.cos(dl);
+  return (Math.atan2(y, x) / RAD + 360) % 360;
+}
+const cardinal = d => CARD[Math.round(d / 45) % 8];
+const origin = () => pos ? [pos.lat, pos.lon] : null;
+const saveDests = () => LS.set('senda.dests', dests);
+function fmtMins(m) { m = Math.round(m); const h = Math.floor(m / 60); return h ? `${h} h ${String(m % 60).padStart(2, '0')} min` : `${m} min`; }
+
+function drawDests() {
+  destLayer.clearLayers(); destMarkers = [];
+  dests.forEach((d, i) => {
+    const m = L.marker([d.lat, d.lon], { icon: L.divIcon({ className: '', html: `<div class="dmark">${i + 1}</div>`, iconSize: [30, 30], iconAnchor: [15, 15] }), draggable: true, zIndexOffset: 500 }).addTo(destLayer);
+    m.bindTooltip('', { permanent: true, direction: 'top', offset: [0, -16], className: 'dtip' });
+    m.on('dragend', () => { const ll = m.getLatLng(); d.lat = ll.lat; d.lon = ll.lng; d.arrived = false; saveDests(); clearAlts(); updateDests(); });
+    m.on('click', openDests);
+    destMarkers.push(m);
+  });
+  updateDests();
+}
+function updateDests() {
+  destLines.clearLayers();
+  const o = origin();
+  dests.forEach((d, i) => {
+    const m = destMarkers[i]; if (!m) return;
+    if (!o) { m.setTooltipContent(esc(d.name)); return; }
+    const dist = hav(o, [d.lat, d.lon]);
+    m.setTooltipContent(`${km(dist)} km`);
+    L.polyline([o, [d.lat, d.lon]], { color: css('--dest'), weight: 3, opacity: .9, dashArray: '1 9', lineCap: 'round', interactive: false }).addTo(destLines);
+    if (dist < 30 && !d.arrived) { d.arrived = true; saveDests(); vibrate([100, 60, 100, 60, 300]); toast(`Has llegado a ${d.name}`, 4000); }
+  });
+  renderDestbar();
+}
+function renderDestbar() {
+  const bar = $('#destbar');
+  if (!dests.length) { bar.hidden = true; return; }
+  bar.hidden = false;
+  // el objetivo actual es el primer destino al que aún no has llegado
+  const d = dests.find(x => !x.arrived) || dests[dests.length - 1];
+  const o = origin();
+  const rest = dests.length > 1 ? ` · ${dests.indexOf(d) + 1} de ${dests.length}` : '';
+  $('#dbName').textContent = d.name + rest;
+  bar.classList.toggle('here', !!d.arrived);
+  if (!o) { $('#dbSub').textContent = 'Esperando GPS para medir la distancia'; return; }
+  const dist = hav(o, [d.lat, d.lon]), b = bearing(o, [d.lat, d.lon]);
+  $('#dbSub').textContent = d.arrived && dist < 60 ? 'Has llegado' : `${km(dist)} km en línea recta · ${cardinal(b)} ${nf0.format(b)}°`;
+  $('#dbArrow').style.transform = `rotate(${heading != null ? b - heading : b}deg)`;
+}
+function addDest(ll) {
+  dests.push({ id: 'd' + Date.now(), lat: ll.lat, lon: ll.lng, name: `Destino ${dests.length + 1}` });
+  saveDests(); drawDests(); vibrate(40);
+  toast(dests.length === 1 ? 'Destino puesto. Toca la tarjeta de arriba para ver caminos' : `Destino ${dests.length} puesto`);
+}
+function setPlacing(v) { placing = v; $('#btnDest').classList.toggle('placing', v); }
+$('#btnDest').onclick = () => {
+  if (placing) { setPlacing(false); return; }
+  setPlacing(true); toast('Toca el mapa donde quieras ir', 3500);
+};
+map.on('click', e => { if (placing) { setPlacing(false); addDest(e.latlng); } });
+map.on('contextmenu', e => addDest(e.latlng)); // mantener pulsado
+$('#destbar').onclick = openDests;
+
+function routeStats(pts) {
+  let dist = 0, up = 0, down = 0, ref = null;
+  for (let i = 0; i < pts.length; i++) {
+    if (i) dist += hav(pts[i - 1], pts[i]);
+    const e = pts[i][2];
+    if (e != null) { if (ref == null) ref = e; const d = e - ref; if (d >= 3) { up += d; ref = e; } else if (d <= -3) { down -= d; ref = e; } }
+  }
+  // tiempo MIDE: 4 km/h en llano, 400 m/h subiendo, 600 m/h bajando
+  const th = dist / 1000 / 4, tv = up / 400 + down / 600;
+  return { pts, dist, up, down, mins: (Math.max(th, tv) + Math.min(th, tv) / 2) * 60 };
+}
+async function brouter(pts, alt, profile) {
+  const ll = pts.map(p => `${p[1].toFixed(6)},${p[0].toFixed(6)}`).join('|');
+  const ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), 30000);
+  try {
+    const r = await fetch(`https://brouter.de/brouter?lonlats=${ll}&profile=${profile}&alternativeidx=${alt}&format=geojson`, { signal: ctrl.signal });
+    if (!r.ok) throw new Error('sin ruta');
+    const f = (await r.json()).features[0];
+    return routeStats(f.geometry.coordinates.map(c => [c[1], c[0], c[2] != null ? Math.round(c[2] * 10) / 10 : null]));
+  } finally { clearTimeout(t); }
+}
+let computing = false;
+async function computePaths(targets, label) {
+  const o = origin();
+  if (!o) { toast('Necesito señal GPS para calcular caminos desde donde estás', 4000); return; }
+  if (computing) return; computing = true;
+  const profile = LS.get('senda.profile', 'hiking-mountain');
+  toast('Buscando caminos…', 30000);
+  const pts = [o, ...targets.map(d => [d.lat, d.lon])];
+  const res = await Promise.allSettled([0, 1, 2].map(i => brouter(pts, i, profile)));
+  computing = false;
+  let ok = res.filter(r => r.status === 'fulfilled').map(r => r.value);
+  ok = ok.filter((a, i) => ok.findIndex(b => Math.abs(b.dist - a.dist) < Math.max(15, a.dist * 0.005)) === i);
+  if (!ok.length) {
+    toast(navigator.onLine ? 'No encontré caminos cartografiados hasta ahí. Te queda la línea recta.' : 'Sin cobertura: solo puedo darte la distancia en línea recta', 5000);
+    return;
+  }
+  alts = ok.map((a, i) => ({ ...a, color: ALT_COLORS[i], name: `${label}${ok.length > 1 ? ` (opción ${i + 1})` : ''}` }));
+  drawAlts();
+  map.fitBounds(L.latLngBounds(alts.flatMap(a => a.pts.map(p => [p[0], p[1]]))), { padding: [40, 40] });
+  setFollow(false);
+  toast(ok.length > 1 ? `${ok.length} caminos posibles` : 'Hay un camino', 2500);
+  openDests();
+}
+function drawAlts() {
+  altLayer.clearLayers();
+  [...alts].reverse().forEach(a => {
+    const ll = a.pts.map(p => [p[0], p[1]]);
+    L.polyline(ll, { color: '#ffffff', weight: 9, opacity: .85, interactive: false }).addTo(altLayer);
+    L.polyline(ll, { color: a.color, weight: 5, opacity: .95 }).on('click', openDests).addTo(altLayer);
+  });
+}
+function clearAlts() { alts = []; altLayer.clearLayers(); }
+
+function openDests() {
+  const o = origin(), prof = LS.get('senda.profile', 'hiking-mountain');
+  openSheet(`<div class="sh-head"><h2>Destinos</h2>${closeBtn}</div>
+    ${dests.length ? '' : '<div class="empty">Aún no hay destinos. Pulsa el botón de la diana y toca el mapa, o mantén pulsado un punto del mapa.</div>'}
+    ${dests.map((d, i) => {
+      const s = o ? (() => { const dist = hav(o, [d.lat, d.lon]), b = bearing(o, [d.lat, d.lon]); return `${km(dist)} km en línea recta · ${cardinal(b)} ${nf0.format(b)}°`; })() : 'Sin GPS todavía';
+      return `<div class="trk">
+        <div class="t1"><span class="dnum">${i + 1}</span><input data-name="${i}" value="${esc(d.name)}" maxlength="40" aria-label="Nombre del destino ${i + 1}"></div>
+        <div class="t2">${s}${d.arrived ? ' · alcanzado' : ''}</div>
+        <div class="row">
+          <button class="btn ghost" data-paths="${i}">Ver caminos</button>
+          ${i ? `<button class="btn ghost" data-up="${i}">Subir</button>` : ''}
+          <button class="btn danger" data-del="${i}">Quitar</button>
+        </div></div>`; }).join('')}
+    ${dests.length > 1 ? '<div class="row"><button class="btn alt" id="pathAll">Camino pasando por todos en orden</button></div>' : ''}
+    ${dests.length ? `<div class="field"><label for="prof">Tipo de camino</label><select id="prof">${Object.entries(PROFILES).map(([k, v]) => `<option value="${k}" ${k === prof ? 'selected' : ''}>${v}</option>`).join('')}</select></div>` : ''}
+    ${alts.length ? `<h2 style="font-size:20px">Caminos posibles</h2>${alts.map((a, i) => `
+      <div class="trk">
+        <div class="t1"><span class="swatch" style="background:${a.color}"></span>${esc(a.name)}</div>
+        <div class="t2">${km(a.dist)} km · ↑ ${nf0.format(a.up)} m ↓ ${nf0.format(a.down)} m · ~${fmtMins(a.mins)}</div>
+        <div class="row"><button class="btn alt" data-follow="${i}">Seguir este</button></div>
+      </div>`).join('')}
+      <div class="row"><button class="btn ghost" id="altClear">Quitar caminos del mapa</button></div>` : ''}
+    <p style="font-size:13px">Los caminos salen de los senderos de OpenStreetMap y necesitan cobertura para calcularse. La distancia en línea recta y la flecha funcionan siempre. Tiempo estimado con el método MIDE.</p>`);
+  const sh = $('#sheet');
+  sh.querySelectorAll('[data-name]').forEach(inp => inp.onchange = () => { dests[+inp.dataset.name].name = inp.value.trim() || `Destino ${+inp.dataset.name + 1}`; saveDests(); updateDests(); });
+  sh.querySelectorAll('[data-paths]').forEach(b => b.onclick = () => { const d = dests[+b.dataset.paths]; closeSheet(); computePaths([d], d.name); });
+  sh.querySelectorAll('[data-up]').forEach(b => b.onclick = () => { const i = +b.dataset.up; [dests[i - 1], dests[i]] = [dests[i], dests[i - 1]]; saveDests(); clearAlts(); drawDests(); openDests(); });
+  sh.querySelectorAll('[data-del]').forEach(b => armDanger(b, '¿Seguro?', () => { dests.splice(+b.dataset.del, 1); saveDests(); clearAlts(); drawDests(); openDests(); }));
+  sh.querySelectorAll('[data-follow]').forEach(b => b.onclick = () => {
+    const a = alts[+b.dataset.follow];
+    clearAlts(); closeSheet(); setRoute(prepRoute(a.name, a.pts, [])); toast('Siguiendo el camino elegido');
+  });
+  const pa = $('#pathAll'); if (pa) pa.onclick = () => { closeSheet(); computePaths(dests.filter(d => !d.arrived).length ? dests.filter(d => !d.arrived) : dests, 'Por todos los destinos'); };
+  const pr = $('#prof'); if (pr) pr.onchange = () => LS.set('senda.profile', pr.value);
+  const ac = $('#altClear'); if (ac) ac.onclick = () => { clearAlts(); closeSheet(); };
+}
+
 /* ---------- arranque ---------- */
 if (rec) {
   // la página se recargó o el navegador la cerró durante la grabación: el tiempo sigue contando
@@ -833,7 +1030,7 @@ if (rec) {
   if (rec.status === 'rec') { lockScreen(); toast('Grabación recuperada'); }
 }
 if (route) drawRoute();
-drawPins(); renderActions(); renderStats();
+drawPins(); drawDests(); renderActions(); renderStats();
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 const mq = matchMedia('(prefers-color-scheme: dark)'); mq.addEventListener && mq.addEventListener('change', () => { drawTrack(); drawRoute(); profDirty = true; renderStats(); });
 </script>
